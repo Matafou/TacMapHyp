@@ -53,11 +53,8 @@ Ltac my_rename_hyp h th :=
 
 Ltac rename_hyp ::= my_rename_hyp.>> *)
 
-Ltac rename_hyp h ht := match true with true => fail | _ => fresh "hh" end.
+Ltac rename_hyp h ht := fail.
 
-Ltac rename_hyp_prefx h ht :=
-  let res := rename_hyp h ht in
-  fresh "h_" res.
 
 (** ** The default fallback renaming strategy 
   This is used if the user-defined renaming scheme fails to give a name
@@ -104,6 +101,8 @@ Ltac fallback_rename_hyp h th :=
     | @eq nat true _ => fresh "eq_nat_true"
     | @eq nat false _ => fresh "eq_nat_false"
     | @eq nat _ _ => fresh "eq_nat"
+    | ?x <> _ => fresh "neq_" x
+    | _ <> ?x => fresh "neq_" x
     | _ <> _ => fresh "neq"
     | _ = _ => fresh "eq"
     | _ /\ _ => fresh "and"
@@ -134,11 +133,50 @@ Ltac fallback_rename_hyp h th :=
     | (?x >= ?y)%Z => fresh "ge_" x "_" y
     | (?x >= _)%Z => fresh "ge_" x
     | (_ >= _)%Z => fresh "ge"
+    | ~ (_ = _) => fail 1(* h_neq already dealt by fallback *)
+    | ~ ?th' => 
+      let sufx := fallback_rename_hyp h th' in
+      fresh "neg_" sufx
+    | ~ ?th' => fresh "neg"
+    (* Order is important here: *)
+    | ?A -> ?B =>
+      let nme := fallback_rename_hyp h B in
+      fresh "impl_" nme
+    | forall z:?A , ?B =>
+      fresh "forall_" z
+  end.
+
+Inductive HypPrefixes :=
+  | HypNone
+  | HypH_
+  | HypH.
+
+(* One should rename this if needed *)
+Ltac prefixable_eq_neq h th :=
+  match th with
+  | eq _ _ => HypH
+  | ~ (eq _ _) => HypH
+  | _ => HypH_
+  end.
+
+Ltac prefixable h th := prefixable_eq_neq h th.
+
+(* Add prefix except if not a Prop or if prefixable says otherwise. *)
+Ltac add_prefix h th nme :=
+  match type of th with
+  | Prop => 
+    match prefixable h th with
+    | HypH_ => fresh "h_" nme
+    | HypH => fresh "h" nme
+    | HypNone => nme
+    end
+  | _ => nme
   end.
 
 Ltac fallback_rename_hyp_prefx h th :=
   let res := fallback_rename_hyp h th in
-  fresh "h_" res.
+  add_prefix h th res.
+  (* fresh "h_" res. *)
 
 
 
@@ -146,6 +184,7 @@ Ltac fallback_rename_hyp_prefx h th :=
    P but prefixed by "neg_" *)
 Ltac rename_hyp_neg h th :=
   match th with
+  | ~ (_ = _) => fail 1(* h_neq already dealt by fallback *)
   | ~ ?th' => 
     let sufx := fallback_rename_hyp h th' in
     fresh "neg_" sufx
@@ -386,27 +425,21 @@ Ltac move_up_types H := match type of H with
 Ltac up_type := map_all_hyps_rev move_up_types.
 
 (* A full example: *)
-(*
-Ltac rename_hyp_1 h th :=
-  match th with
-  | _ => rename_hyp_neg h th
-  | ?A -> ?B =>
-    let nme := fallback_rename_hyp h B in
-    fresh "impl_" nme
-  end.
 
 Ltac rename_hyp_2 h th :=
   match th with
   | true = false => fresh "trueEQfalse"
-  | _ => rename_hyp_1 h th
   end.
 
 Ltac rename_hyp ::= rename_hyp_2.
-
+(*
 Lemma foo: forall x y,
     x <= y -> 
+    x = y -> 
     ~1 < 0 ->
     (0 < 1 -> ~(true=false)) ->
+    (forall w,w = 0) ->
+    (forall w w',w < w' -> ~(true=false)) ->
     (0 < 1 -> ~(1<0)) ->
     (0 < 1 -> 1<0) -> 0 < 1.
   (* auto naming at intro: *)
